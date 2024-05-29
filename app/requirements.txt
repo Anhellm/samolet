@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+bs4
+requests
+lxml
+confluent_kafka
+SQLAlchemy
+psycopg2
+pyspark==3.5.1
+py4j

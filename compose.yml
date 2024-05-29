@@ -1,0 +1,152 @@
+version: '3'
+
+networks:
+  test:
+    name: custom_network
+
+volumes:
+  hadoop_namenode:
+  hadoop_datanode:
+  files:
+  pg_data:
+    driver: local
+
+services:
+# PG
+  postgres:
+    image: postgres
+    restart: always
+    container_name: postgres
+    env_file:
+      - db_env
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - ${POSTGRES_PORT:-5432}:5432
+    networks:
+      - test
+
+# ZOOKEEPER
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 22181:2181
+    networks:
+      - test
+
+# KAFKA
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - 9092:9092
+      - 9094:9094
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://kafka:9092,PLAINTEXT_OUT://kafka:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092,PLAINTEXT_OUT://172.17.18.183:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_OUT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - test
+
+# SPARK
+  spark:
+    image: docker.io/bitnami/spark:3.5
+    container_name: spark_master
+    volumes:
+      - files:/files
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+    ports:
+      - '8080:8080'
+      - '7077:7077'
+      - '10027:10027'
+    networks:
+      - test
+  spark-worker:
+    image: docker.io/bitnami/spark:3.5
+    container_name: spark_worker
+    volumes:
+      - files:/files
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_USER=spark
+      - SPARK_WORKER_PORT=10028
+    ports:
+      - 10028:10028
+      - 8081:8081
+    networks:
+      - test
+
+# HDFS
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs_namenode
+    restart: always
+    ports:
+      - 9870:9870
+      - 9000:9000
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=test
+    env_file:
+      - ./config
+    networks:
+      - test
+
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: hdfs_datanode
+    restart: always
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file:
+      - ./config
+    networks:
+      - test
+
+# APP
+  app:
+    image: fapi
+    container_name: fapi
+    volumes:
+      - files:/files
+    environment:
+      PG_HOST: "postgres"
+      KAFKA_HOST: "172.17.18.183"
+      KAFKA_PORT: 9094
+      KAFKA_TOPIC: "blacklist"
+      SPARK_HOST: "spark"
+      SPARK_PORT: 7077
+      HDFS_HOST: "namenode"
+      HDFS_PORT: 9000
+    env_file:
+      - db_env
+    ports:
+      - 82:80
+    networks:
+      - test
